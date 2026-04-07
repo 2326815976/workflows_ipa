@@ -1,5 +1,4 @@
 # iOS IPA Build Workflow
-# 姝ゆ枃浠堕渶瑕佹斁缃湪 workflows_ipa 浠撳簱鐨?.github/workflows/ 鐩綍涓?
 name: Build iOS IPA
 
 on:
@@ -33,9 +32,9 @@ jobs:
           mkdir -p source
           cd source
           unzip ../source.zip
-          
-          # 鏌ユ壘 Xcode 椤圭洰鐩綍锛堟帓闄?Pods 鐩綍锛?
-          # 浼樺厛浣跨敤 .xcworkspace锛圕ocoaPods 椤圭洰闇€瑕侊級
+
+          # Find Xcode project dir (exclude Pods)
+          # Prefer .xcworkspace for CocoaPods projects
           WORKSPACE=$(find . -name "*.xcworkspace" -not -path "*/Pods/*" -not -path "*/.build/*" -maxdepth 4 | head -1)
           if [ -n "$WORKSPACE" ]; then
             XCODE_DIR=$(dirname "$WORKSPACE")
@@ -45,7 +44,6 @@ jobs:
             echo "BUILD_TYPE=workspace" >> $GITHUB_ENV
             echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $GITHUB_ENV
           else
-            # 鍥為€€鍒?.xcodeproj锛堟帓闄?Pods锛?
             PROJ=$(find . -name "*.xcodeproj" -not -path "*/Pods/*" -not -path "*/.build/*" -maxdepth 4 | head -1)
             if [ -n "$PROJ" ]; then
               XCODE_DIR=$(dirname "$PROJ")
@@ -62,58 +60,54 @@ jobs:
           echo "Xcode directory: $XCODE_DIR"
           ls -la "$XCODE_DIR/"
 
-      - name: Install CocoaPods (if needed)
+      - name: Install CocoaPods
         run: |
           cd "source/$XCODE_DIR"
           if [ -f "Podfile" ]; then
-            echo "Podfile found, installing CocoaPods dependencies..."
+            echo "Podfile found, installing dependencies..."
             pod install --repo-update || pod install
           else
-            echo "No Podfile found, skipping CocoaPods"
+            echo "No Podfile, skipping"
           fi
 
       - name: Build IPA
         run: |
           cd "source/$XCODE_DIR"
-          
-          # 鑾峰彇 scheme 鍚嶇О锛堟帓闄?Tests scheme锛?
+
+          # Get scheme name (filter out test schemes)
           if [ "$BUILD_TYPE" = "workspace" ]; then
             SCHEME=$(xcodebuild -workspace "$WORKSPACE_NAME" -list -json 2>/dev/null | python3 -c "
-import sys,json
-data=json.load(sys.stdin)
-schemes=data.get('workspace',{}).get('schemes',[])
-# 杩囨护鎺?Tests 缁撳熬鐨?scheme
-non_test=[s for s in schemes if not s.endswith('Tests') and not s.endswith('UITests')]
-print(non_test[0] if non_test else (schemes[0] if schemes else ''))
-" 2>/dev/null || echo "")
+          import sys,json
+          data=json.load(sys.stdin)
+          schemes=data.get('workspace',{}).get('schemes',[])
+          non_test=[s for s in schemes if not s.endswith('Tests') and not s.endswith('UITests')]
+          print(non_test[0] if non_test else (schemes[0] if schemes else ''))
+          " 2>/dev/null || echo "")
           else
             SCHEME=$(xcodebuild -list -json 2>/dev/null | python3 -c "
-import sys,json
-data=json.load(sys.stdin)
-schemes=data.get('project',{}).get('schemes',[])
-non_test=[s for s in schemes if not s.endswith('Tests') and not s.endswith('UITests')]
-print(non_test[0] if non_test else (schemes[0] if schemes else ''))
-" 2>/dev/null || echo "")
+          import sys,json
+          data=json.load(sys.stdin)
+          schemes=data.get('project',{}).get('schemes',[])
+          non_test=[s for s in schemes if not s.endswith('Tests') and not s.endswith('UITests')]
+          print(non_test[0] if non_test else (schemes[0] if schemes else ''))
+          " 2>/dev/null || echo "")
           fi
-          
+
           if [ -z "$SCHEME" ]; then
-            # 灏濊瘯浠庣洰褰曞悕鎺ㄦ柇 scheme
             SCHEME=$(ls -d *.xcodeproj 2>/dev/null | head -1 | sed 's/.xcodeproj//')
-            if [ -z "$SCHEME" ]; then
-              SCHEME="WebViewApp"
-            fi
+            [ -z "$SCHEME" ] && SCHEME="WebViewApp"
           fi
           echo "Using scheme: $SCHEME"
-          
-          # 鏋勫缓鍛戒护 - 鏍规嵁 workspace 鎴?project
+
+          # Build command based on workspace or project
           BUILD_CMD="xcodebuild archive"
           if [ "$BUILD_TYPE" = "workspace" ]; then
             BUILD_CMD="$BUILD_CMD -workspace $WORKSPACE_NAME"
           else
             BUILD_CMD="$BUILD_CMD -project $PROJ_NAME"
           fi
-          
-          # 鎵ц鏋勫缓锛堟棤绛惧悕锛岀敤浜庡鍑烘湭绛惧悕 IPA锛?
+
+          # Archive (no code signing)
           $BUILD_CMD \
             -scheme "$SCHEME" \
             -archivePath build/app.xcarchive \
@@ -125,26 +119,25 @@ print(non_test[0] if non_test else (schemes[0] if schemes else ''))
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
             2>&1 | tail -50
-          
-          # 楠岃瘉 archive 浜х墿
+
+          # Verify archive output
           echo "=== Archive contents ==="
-          ls -la build/app.xcarchive/Products/Applications/ 2>/dev/null || echo "WARNING: No Applications directory found"
-          
-          # 鍒涘缓鏃犵鍚?IPA
+          ls -la build/app.xcarchive/Products/Applications/ 2>/dev/null || echo "No Applications dir"
+
+          # Create unsigned IPA
           mkdir -p build/Payload
           if [ -d "build/app.xcarchive/Products/Applications/" ]; then
             cp -r build/app.xcarchive/Products/Applications/*.app build/Payload/
           else
-            echo "ERROR: No .app bundle found in archive!"
-            echo "Archive structure:"
-            find build/app.xcarchive -maxdepth 3 -type d
+            echo "ERROR: No .app bundle in archive!"
+            find build/app.xcarchive -maxdepth 3 -type d 2>/dev/null
             exit 1
           fi
-          
+
           cd build
           zip -r ../app-release.ipa Payload/
           cd ..
-          
+
           echo "IPA created successfully"
           ls -la app-release.ipa
 
@@ -161,7 +154,7 @@ print(non_test[0] if non_test else (schemes[0] if schemes else ''))
           if [ -n "${{ inputs.callback_url }}" ]; then
             STATUS="${{ job.status }}"
             RUN_ID="${{ github.run_id }}"
-            
+
             curl -X POST "${{ inputs.callback_url }}" \
               -H "Content-Type: application/json" \
               -d "{\"status\": \"$STATUS\", \"run_id\": \"$RUN_ID\", \"artifact_url\": \"\"}" \
