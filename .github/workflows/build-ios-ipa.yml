@@ -1,5 +1,5 @@
 # iOS IPA Build Workflow
-# 此文件需要放置在 workflows_ipa 仓库的 .github/workflows/ 目录下
+# 姝ゆ枃浠堕渶瑕佹斁缃湪 workflows_ipa 浠撳簱鐨?.github/workflows/ 鐩綍涓?
 name: Build iOS IPA
 
 on:
@@ -34,8 +34,8 @@ jobs:
           cd source
           unzip ../source.zip
           
-          # 查找 Xcode 项目目录（排除 Pods 目录）
-          # 优先使用 .xcworkspace（CocoaPods 项目需要）
+          # 鏌ユ壘 Xcode 椤圭洰鐩綍锛堟帓闄?Pods 鐩綍锛?
+          # 浼樺厛浣跨敤 .xcworkspace锛圕ocoaPods 椤圭洰闇€瑕侊級
           WORKSPACE=$(find . -name "*.xcworkspace" -not -path "*/Pods/*" -not -path "*/.build/*" -maxdepth 4 | head -1)
           if [ -n "$WORKSPACE" ]; then
             XCODE_DIR=$(dirname "$WORKSPACE")
@@ -45,7 +45,7 @@ jobs:
             echo "BUILD_TYPE=workspace" >> $GITHUB_ENV
             echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $GITHUB_ENV
           else
-            # 回退到 .xcodeproj（排除 Pods）
+            # 鍥為€€鍒?.xcodeproj锛堟帓闄?Pods锛?
             PROJ=$(find . -name "*.xcodeproj" -not -path "*/Pods/*" -not -path "*/.build/*" -maxdepth 4 | head -1)
             if [ -n "$PROJ" ]; then
               XCODE_DIR=$(dirname "$PROJ")
@@ -76,13 +76,13 @@ jobs:
         run: |
           cd "source/$XCODE_DIR"
           
-          # 获取 scheme 名称（排除 Tests scheme）
+          # 鑾峰彇 scheme 鍚嶇О锛堟帓闄?Tests scheme锛?
           if [ "$BUILD_TYPE" = "workspace" ]; then
             SCHEME=$(xcodebuild -workspace "$WORKSPACE_NAME" -list -json 2>/dev/null | python3 -c "
 import sys,json
 data=json.load(sys.stdin)
 schemes=data.get('workspace',{}).get('schemes',[])
-# 过滤掉 Tests 结尾的 scheme
+# 杩囨护鎺?Tests 缁撳熬鐨?scheme
 non_test=[s for s in schemes if not s.endswith('Tests') and not s.endswith('UITests')]
 print(non_test[0] if non_test else (schemes[0] if schemes else ''))
 " 2>/dev/null || echo "")
@@ -97,7 +97,7 @@ print(non_test[0] if non_test else (schemes[0] if schemes else ''))
           fi
           
           if [ -z "$SCHEME" ]; then
-            # 尝试从目录名推断 scheme
+            # 灏濊瘯浠庣洰褰曞悕鎺ㄦ柇 scheme
             SCHEME=$(ls -d *.xcodeproj 2>/dev/null | head -1 | sed 's/.xcodeproj//')
             if [ -z "$SCHEME" ]; then
               SCHEME="WebViewApp"
@@ -105,7 +105,7 @@ print(non_test[0] if non_test else (schemes[0] if schemes else ''))
           fi
           echo "Using scheme: $SCHEME"
           
-          # 构建命令 - 根据 workspace 或 project
+          # 鏋勫缓鍛戒护 - 鏍规嵁 workspace 鎴?project
           BUILD_CMD="xcodebuild archive"
           if [ "$BUILD_TYPE" = "workspace" ]; then
             BUILD_CMD="$BUILD_CMD -workspace $WORKSPACE_NAME"
@@ -113,7 +113,7 @@ print(non_test[0] if non_test else (schemes[0] if schemes else ''))
             BUILD_CMD="$BUILD_CMD -project $PROJ_NAME"
           fi
           
-          # 执行构建（无签名，用于导出未签名 IPA）
+          # 鎵ц鏋勫缓锛堟棤绛惧悕锛岀敤浜庡鍑烘湭绛惧悕 IPA锛?
           $BUILD_CMD \
             -scheme "$SCHEME" \
             -archivePath build/app.xcarchive \
@@ -126,11 +126,11 @@ print(non_test[0] if non_test else (schemes[0] if schemes else ''))
             PROVISIONING_PROFILE_SPECIFIER="" \
             2>&1 | tail -50
           
-          # 验证 archive 产物
+          # 楠岃瘉 archive 浜х墿
           echo "=== Archive contents ==="
           ls -la build/app.xcarchive/Products/Applications/ 2>/dev/null || echo "WARNING: No Applications directory found"
           
-          # 创建无签名 IPA
+          # 鍒涘缓鏃犵鍚?IPA
           mkdir -p build/Payload
           if [ -d "build/app.xcarchive/Products/Applications/" ]; then
             cp -r build/app.xcarchive/Products/Applications/*.app build/Payload/
